@@ -829,36 +829,69 @@ var _PROLAM=['A407','A4010U','A4010P','A4-125','A4-175','A4GEN','A305','A307U','
    ---------------------------------------------------------------- */
 function renderKenniRitmo(){
   var el=document.getElementById('kenniRitmo'); if(!el) return;
-  if (typeof repConsumoDia!=='function'){ el.innerHTML='<div class="muted">O motor de reposi&ccedil;&atilde;o n&atilde;o carregou.</div>'; return; }
   try{ if (typeof CONF!=='undefined' && !CONF.carregado && typeof confCarregar==='function'){ CONF.carregado=true; confCarregar().then(function(){ try{renderKenniRitmo();}catch(e){} }); } }catch(e){}
+  var pers=periodosComDados();
+  if(!pers.length){ el.innerHTML='Ainda n&atilde;o h&aacute; vendas importadas para medir o ritmo. Importe as planilhas em <b>Entradas</b> &mdash; ou deixe a <b>Confer&ecirc;ncia</b> bipando, que em 14 dias o ritmo passa a vir do que saiu de verdade.'; return; }
+  var meses=(typeof REP!=='undefined'&&REP&&REP.meses)?REP.meses:3;
+  pers=pers.slice(-Math.max(1,meses));
+  var dias=pers.length*30;
+  /* soma por ANUNCIO: grupo + tamanho do pacote. E assim que se pre-embala. */
   var agg={};
   EMPRESAS.forEach(function(emp){
-    var seen={}; var skus=new Set(skusVendidosAll(emp));
-    ENT.filter(function(e){return e.empresa===emp;}).forEach(function(e){skus.add(e.sku);});
-    skus.forEach(function(sku){
-      var g=groupOf(sku); if(seen[g]||isKitGrp(g))return; seen[g]=1;
-      var d=repConsumoDia(emp,g); if(!(d>0))return;
-      var conf=false;
-      try{ if(typeof confConsumoDia==='function'&&REP.usarConf&&CONF.linhas.length){var c=confConsumoDia(emp,g); if(c&&c.dias>=14)conf=true;} }catch(e){}
-      var a=agg[g]||(agg[g]={sku:g,descr:(typeof baseLabel==='function'?baseLabel(g):g),dia:0,emps:[],conf:false});
-      a.dia+=d; a.emps.push({emp:emp,dia:d}); if(conf)a.conf=true;
+    pers.forEach(function(per){
+      var v=(VBASE[per]||{})[emp]||{};
+      Object.keys(v).forEach(function(sku){
+        var qtd=Number(v[sku].qtd)||0; if(!qtd)return;
+        var g=groupOf(sku);
+        var folhas=0; try{ folhas=(typeof folhasDoSku==='function'?folhasDoSku(sku):0)||0; }catch(e){}
+        var kit=false; try{ kit=!!(typeof kitComps==='function'&&kitComps(sku)); }catch(e){}
+        if(!kit && /^KIT/i.test(g)) kit=true;
+        /* tamanho do pacote em folhas: fracionado/fechado vem da descricao;
+           folhas==1 significa venda em folha avulsa -> pacote padrao de 100 */
+        var packF = kit?0:(folhas>1?folhas:(folhas===1?100:0));
+        var pacs  = kit?qtd:(folhas===1?qtd/100:qtd);
+        var key=g+'|'+(kit?'kit':packF);
+        var a=agg[key]||(agg[key]={g:g,fat:packF,kit:kit,descr:(typeof baseLabel==='function'?baseLabel(g):g),pac:0,emps:{}});
+        a.pac+=pacs; a.emps[emp]=(a.emps[emp]||0)+pacs;
+      });
     });
   });
-  var list=Object.keys(agg).map(function(k){return agg[k];}).sort(function(a,b){return b.dia-a.dia;});
-  if(!list.length){ el.innerHTML='Ainda n&atilde;o h&aacute; vendas importadas para medir o ritmo. Importe as planilhas em <b>Entradas</b> &mdash; ou deixe a <b>Confer&ecirc;ncia</b> bipando, que em 14 dias o ritmo passa a vir do que saiu de verdade.'; return; }
-  var h='<tr><th>Produto</th><th class="num">Sai por dia</th><th class="num">Por semana</th><th class="num">Deixar pronto (2 dias)</th><th>Por empresa</th><th>Fonte</th></tr>', b='';
-  list.slice(0,40).forEach(function(r){
-    var emps=r.emps.sort(function(a,b){return b.dia-a.dia;}).map(function(x){
-      return '<span class="empresa-dot" style="background:'+((typeof CORES!=='undefined'&&CORES[x.emp])||'#999')+'"></span>'+x.emp+' '+fmt1(x.dia);}).join(' &nbsp; ');
-    b+='<tr><td><b>'+r.sku+'</b><div class="muted">'+r.descr+'</div></td>'+
-       '<td class="num"><b style="font-size:15px">'+fmt1(r.dia)+'</b></td>'+
-       '<td class="num">'+fmt(Math.ceil(r.dia*7))+'</td>'+
-       '<td class="num"><b>'+fmt(Math.ceil(r.dia*2))+'</b> pct</td>'+
+  var list=Object.keys(agg).map(function(k){var a=agg[k];a.dia=a.pac/dias;return a;})
+    .filter(function(a){return a.dia>0.005;})
+    .sort(function(a,b){return b.dia-a.dia;});
+  if(!list.length){ el.innerHTML='Sem venda no per&iacute;odo usado ('+pers.join(', ')+').'; return; }
+  /* conferencia por tamanho: se ja tem 14+ dias bipados daquele pacote, o ritmo vem dela */
+  function confDia(a){ try{
+    if(typeof CONF==='undefined'||!CONF.linhas||!CONF.linhas.length)return null;
+    var corte=Date.now()-(((typeof REP!=='undefined'&&REP&&REP.confDias)||30)*86400000), tot=0, ds={};
+    CONF.linhas.forEach(function(l){
+      var t=Date.parse(l.conferido_em||''); if(!t||t<corte)return;
+      ds[String(l.conferido_em).slice(0,10)]=1;
+      if(groupOf(l.sku||l.sku_ml||'')!==a.g)return;
+      var tam=Number(l.tamanho)||0; if(tam&&a.fat>1&&tam!==a.fat)return;
+      tot+=Number(l.pacotes)||0;
+    });
+    var nd=Object.keys(ds).length;
+    return nd>=14?{dia:tot/nd,dias:nd}:null;
+  }catch(e){return null;} }
+  var h='<tr><th>Produto</th><th>Pacote do an&uacute;ncio</th><th class="num">Sai por dia</th><th class="num">Por semana</th><th class="num">Deixar pronto (2 dias)</th><th>Por empresa</th><th>Fonte</th></tr>', b='';
+  var curG=null;
+  list.slice(0,60).forEach(function(r){
+    var c=confDia(r), dia=c?c.dia:r.dia;
+    var tam = r.kit ? '<b style="color:#7c3aed">KIT (montar)</b>' : (r.fat>1 ? '<b>'+fmt(r.fat)+'</b> folhas' : 'unidade');
+    var emps=Object.keys(r.emps).sort(function(x,y){return r.emps[y]-r.emps[x];}).map(function(e){
+      return '<span class="empresa-dot" style="background:'+((typeof CORES!=='undefined'&&CORES[e])||'#999')+'"></span>'+e+' '+fmt1(r.emps[e]/dias);}).join(' &nbsp; ');
+    b+='<tr><td>'+(r.g!==curG?'<b>'+r.g+'</b><div class="muted">'+r.descr+'</div>':'<span class="muted">&#8627; '+r.g+'</span>')+'</td>'+
+       '<td>'+tam+'</td>'+
+       '<td class="num"><b style="font-size:15px">'+fmt1(dia)+'</b></td>'+
+       '<td class="num">'+fmt(Math.ceil(dia*7))+'</td>'+
+       '<td class="num"><b>'+fmt(Math.ceil(dia*2))+'</b> '+(r.kit?'kit(s)':'pct')+'</td>'+
        '<td style="font-size:12px">'+emps+'</td>'+
-       '<td class="muted" style="font-size:11px">'+(r.conf?'confer&ecirc;ncia (bipado)':'planilha de vendas')+'</td></tr>';
+       '<td class="muted" style="font-size:11px">'+(c?('confer&ecirc;ncia, '+c.dias+' dias'):'planilha de vendas')+'</td></tr>';
+    curG=r.g;
   });
-  el.innerHTML='<div style="overflow:auto;max-height:420px"><table>'+h+b+'</table></div>'+
-    '<div class="muted" style="margin-top:6px">Ritmo em <b>pacotes por dia</b>, somando as empresas. Onde a Confer&ecirc;ncia tem 14+ dias de bipagem o n&uacute;mero vem do que foi bipado; sen&atilde;o, da m&eacute;dia das planilhas. <b>Deixar pronto (2 dias)</b> = quanto pr&eacute;-embalar para n&atilde;o montar pacote na correria.</div>';
+  el.innerHTML='<div style="overflow:auto;max-height:460px"><table>'+h+b+'</table></div>'+
+    '<div class="muted" style="margin-top:6px">Cada linha &eacute; um <b>tamanho de an&uacute;ncio</b>: pacote de 50 &eacute; uma linha, de 100 &eacute; outra &mdash; porque a pr&eacute;-embalagem &eacute; por tamanho. Fracionado aparece separado do fechado. <b>KIT</b> = quantos kits montar (n&atilde;o d&aacute; para pr&eacute;-embalar capa e contracapa soltas sem saber a quantidade). Onde a Confer&ecirc;ncia tem 14+ dias de bipagem, o n&uacute;mero vem do que foi bipado.</div>';
 }
 function renderKenni(){try{renderKenniRitmo();}catch(e){}let pend=PED.filter(p=>p.status==='Pendente').slice().reverse(),tp=document.getElementById('tblPend');
   if(!pend.length)tp.innerHTML='<tr><td class="muted">Nenhum pedido pendente. 🎉</td></tr>';
