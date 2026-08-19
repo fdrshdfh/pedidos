@@ -864,7 +864,31 @@ document.getElementById('pAdd').onclick=()=>{let sol=document.getElementById('pS
   if(!sku){toast('Informe o SKU.');return;}if(!qtd||qtd<=0){toast('Informe a quantidade.');return;}
   addPedido({solicitante:sol,sku,qtd,empresa:emp,obs,data:new Date().toISOString().slice(0,10),status:'Pendente'});
   document.getElementById('pQtd').value='';document.getElementById('pObs').value='';document.getElementById('pProd').value='';document.getElementById('pHint').innerHTML='';toast('Pedido enviado!');};
-function updatePHint(){var praw=document.getElementById('pProd').value.trim(),sku=(praw.split('—')[0]||praw).trim(),el=document.getElementById('pHint');if(!sku||!PRODS[sku]){el.innerHTML='';return;}var rows=EMPRESAS.map(function(emp){var bs=groupOf(sku),ven=venBase(emp,bs)+consumoKit(emp,bs),saldo=entBase(emp,bs)-(venBaseAll(emp,bs)+consumoKitAll(emp,bs)),ped=pedPendBase(emp,bs),sug=Math.max(0,Math.ceil(ven*1.2-Math.max(0,saldo)-ped-1e-9));var cls=saldo<-0.001?'neg':(saldo>0.001?'pos':'zero');return '<tr><td><span class="empresa-dot" style="background:'+CORES[emp]+'"></span>'+emp+'</td><td class="num '+cls+'">'+fmt1(saldo)+'</td><td class="num">'+fmt1(ven)+'</td><td class="num">'+(ped?fmt(ped):'–')+'</td><td class="num"><b>'+fmt(sug)+'</b></td><td>'+(sug>0?'<button class="chip" data-e="'+emp+'" data-q="'+sug+'" style="padding:2px 8px">usar</button>':'')+'</td></tr>';}).join('');var nv=nivelDe(sku);var nvH=nv?('<div class="unit-note" style="margin-bottom:6px">📌 <b>Essencial (estoque vivo): '+nv.v+'</b> &nbsp;·&nbsp; Reserva (estoque morto): '+nv.m+'</div>'):'';el.innerHTML=nvH+'<div style="font-weight:600;margin-bottom:4px">'+sku+' — '+pDescr(sku)+' · sugestão por empresa ('+fmtPer(curPer)+'):</div><table style="max-width:600px"><tr><th>Empresa</th><th class="num">Estoque (pct)</th><th class="num">Vendeu (pct)</th><th class="num">Já pedido (pct)</th><th class="num">Sugestão (pct)</th><th></th></tr>'+rows+'</table>';el.querySelectorAll('button[data-e]').forEach(function(b){b.onclick=function(){document.getElementById('pEmp').value=b.dataset.e;document.getElementById('pQtd').value=b.dataset.q;};});}
+function updatePHint(){
+  var praw=document.getElementById('pProd').value.trim(),sku=(praw.split('—')[0]||praw).trim(),el=document.getElementById('pHint');
+  if(!sku||!PRODS[sku]){el.innerHTML='';return;}
+  var bs=groupOf(sku);
+  var cores={0:'#b91c1c',1:'#b91c1c',2:'#b45309',3:'#166534',4:'#64748b'};
+  var rows=EMPRESAS.map(function(emp){
+    var L=null; try{ if(typeof repLinha==='function') L=repLinha(emp,bs); }catch(e){}
+    if(!L) return '';
+    var cls=L.saldo<-0.001?'neg':(L.saldo>0.001?'pos':'zero');
+    var cb=isFinite(L.cobertura)?(Math.floor(L.cobertura)+' dias'):'—';
+    var comprar=Math.max(0, Math.round(L.comprar||0));
+    return '<tr><td><span class="empresa-dot" style="background:'+CORES[emp]+'"></span>'+emp+'</td>'+
+      '<td class="num '+cls+'">'+fmt1(L.saldo)+'</td>'+
+      '<td class="num">'+(L.dia>0?fmt1(L.dia):'–')+'</td>'+
+      '<td class="num">'+(L.pend?fmt(L.pend):'–')+'</td>'+
+      '<td class="num">'+cb+'</td>'+
+      '<td class="num"><b style="font-size:14px">'+fmt(comprar)+'</b></td>'+
+      '<td style="white-space:nowrap"><b style="color:'+(cores[L.urg]||'#64748b')+'">'+L.sit+'</b></td>'+
+      '<td>'+(comprar>0?'<button class="chip" data-e="'+emp+'" data-q="'+comprar+'" style="padding:2px 8px">usar</button>':'')+'</td></tr>';
+  }).join('');
+  var nv=nivelDe(sku);var nvH=nv?('<div class="unit-note" style="margin-bottom:6px">📌 <b>Essencial (estoque vivo): '+nv.v+'</b> &nbsp;·&nbsp; Reserva (estoque morto): '+nv.m+'</div>'):'';
+  el.innerHTML=nvH+'<div style="font-weight:600;margin-bottom:4px">'+sku+' — '+pDescr(sku)+' · régua da Reposição (média de '+(((typeof REP!=='undefined'&&REP&&REP.meses)||3))+' meses de venda + prazo do fornecedor; nunca chegar a zero):</div>'+
+    '<table style="max-width:780px"><tr><th>Empresa</th><th class="num">Estoque (pct)</th><th class="num">Sai/dia</th><th class="num">Já pedido</th><th class="num">Dura até</th><th class="num">Comprar</th><th>Situação</th><th></th></tr>'+rows+'</table>';
+  el.querySelectorAll('button[data-e]').forEach(function(b){b.onclick=function(){document.getElementById('pEmp').value=b.dataset.e;document.getElementById('pQtd').value=b.dataset.q;};});
+}
 document.getElementById('pProd').addEventListener('input',updatePHint);document.getElementById('pEmp').addEventListener('change',updatePHint);
 function stBadge(s){let c=s==='Pendente'?'pend':(s==='Aprovado'?'aprov':'rec');return `<span class="st ${c}">${s}</span>`;}
 function renderPedidos(){let a=PED.slice().reverse(),t=document.getElementById('tblPedidos');
