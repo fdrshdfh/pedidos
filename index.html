@@ -359,12 +359,12 @@ button.del{background:none;border:none;color:#c0392b;cursor:pointer;font-weight:
     <div class="tab active" data-t="vendas">Vendas</div>
     <div class="tab" data-t="sugestoes">Sugest&otilde;es 💡</div>
     <div class="tab" data-t="dashboard">Dashboard 📊</div>
+    <div class="tab" data-t="atencao">&#9888;&#65039; Aten&ccedil;&atilde;o</div>
     <div class="tab" data-t="pedidos">Pedidos</div>
     <div class="tab" data-t="devol">&#128260; Devolu&ccedil;&otilde;es <span class="pill hidden" id="dvPill">0</span></div>
     <div class="tab" data-t="kenni">Aprova&ccedil;&atilde;o &mdash; Kenni <span class="pill hidden" id="pendPill">0</span></div>
     <div class="tab" data-t="entradas">Entradas</div>
     <div class="tab" data-t="estoque">Estoque (saldo)</div>
-    <div class="tab" data-t="erp">🏦 ERP</div>
     <div class="tab" data-t="financeiro">💰 Financeiro</div>
     <div class="tab" data-t="calculadora">🧮 Calculadora</div>
     <div class="tab" data-t="conf">&#128230; Confer&ecirc;ncia</div>
@@ -386,6 +386,12 @@ button.del{background:none;border:none;color:#c0392b;cursor:pointer;font-weight:
     <div class="card" style="padding:0;overflow:hidden">
       <iframe id="fr_conf" title="Confer&ecirc;ncia de Expedi&ccedil;&atilde;o" style="width:100%;height:calc(100vh - 300px);min-height:520px;border:0;display:block;background:#fff"></iframe>
     </div>
+  </div>
+
+  <div id="atencao" class="tabpane hidden">
+    <div class="card"><div style="font-weight:800;font-size:16px;margin-bottom:4px">&#9888;&#65039; O que pede aten&ccedil;&atilde;o &mdash; empresa por empresa</div>
+      <div class="muted">Preju&iacute;zo, custo alto, queda, falta de estoque, pend&ecirc;ncia&hellip; e tamb&eacute;m o que est&aacute; indo BEM. Calculado na hora com os dados de todas as abas.</div></div>
+    <div id="atBody"></div>
   </div>
 
   <div id="mk2" class="tabpane hidden">
@@ -1121,7 +1127,89 @@ document.getElementById('btnVen').onclick=async()=>{
 
 
 function refreshSelects(){document.getElementById('prodList').innerHTML=prodOpts();document.getElementById('prodList2').innerHTML=prodOpts();var p3=document.getElementById('prodList3');if(p3)p3.innerHTML=prodOpts();}
-function renderAll(){renderPeriodoSel();updatePeriodoInfo();renderKpis();renderVendas();renderPedidos();renderEntradas();renderEstoque();renderSugestoes();renderKenni();updatePendPill();renderConferir();updateConfPill();try{renderFinanceiro();}catch(e){}}
+/* ═══════════════════════════════════════════════════════════════
+   ABA ATENCAO — o pronto-socorro da operacao
+
+   Junta num lugar so o que cada aba ja sabe:
+   ⚠ prejuizo por produto (custo > faturamento no mes fechado)
+   ⚠ custo alto (margem < 10% com venda relevante)
+   ⚠ queda de vendas (3 meses seguidos, ou ritmo do mes despencando)
+   ⚠ falta de estoque (mesma regua da Reposicao)
+   🟡 pendencias (aprovar, conferir, anuncios sem produto no Vendas 2)
+   ✅ o que esta indo bem (crescimento, produto estrela, margem boa)
+   So LE — nao muda nenhum numero.
+   ═══════════════════════════════════════════════════════════════ */
+function atFecho(){ /* ultimo mes FECHADO (anterior ao corrente) e o corrente */
+  var pers = periodosComDados();
+  var hoje = new Date(); var mesCor = hoje.getFullYear()+''+String(hoje.getMonth()+1).padStart(2,'0');
+  var fech = pers.filter(function(p){ return p < mesCor; });
+  return {corrente: pers.indexOf(mesCor)>=0 ? mesCor : null, fechado: fech[fech.length-1]||null, ante: fech[fech.length-2]||null, dia: hoje.getDate()};
+}
+function atTot(per, emp){ var v=(VBASE[per]||{})[emp]||{}, t={fat:0,cst:0}; for(var s2 in v){ t.fat+=Number(v[s2].fat)||0; t.cst+=Number(v[s2].cst)||0; } return t; }
+function renderAtencao(){
+  var el = document.getElementById('atBody'); if(!el) return;
+  var F = atFecho();
+  if(!F.fechado){ el.innerHTML='<div class="card muted">Ainda n&atilde;o h&aacute; m&ecirc;s fechado com vendas.</div>'; return; }
+  var rep = []; try{ rep = (typeof repLista==='function') ? repLista() : []; }catch(e){}
+  var html = '';
+  EMPRESAS.forEach(function(emp){
+    var RU=[], AM=[], BO=[];
+    var v = (VBASE[F.fechado]||{})[emp]||{};
+    var tot = atTot(F.fechado, emp), temCusto = tot.cst > 0;
+    /* produto com prejuizo / custo alto / estrela (so onde ha custo) */
+    if (temCusto){
+      var melhor=null;
+      for (var sku in v){ var fat=Number(v[sku].fat)||0, cst=Number(v[sku].cst)||0;
+        if (fat<=0) continue;
+        var lucro=fat-cst, mg=lucro/fat;
+        if (cst>0 && lucro<0) RU.push('<b>'+sku+'</b> deu PREJU&Iacute;ZO de '+fmtR(-lucro)+' em '+fmtPer(F.fechado)+' (vendeu '+fmtR(fat)+', custou '+fmtR(cst)+')');
+        else if (cst>0 && mg<0.10 && fat>=500) AM.push('<b>'+sku+'</b> com margem apertada: '+Math.round(mg*100)+'% sobre '+fmtR(fat)+' &mdash; custo alto?');
+        if (cst>0 && mg>=0.25 && (!melhor || lucro>melhor.l)) melhor={s:sku,l:lucro,m:mg};
+      }
+      if (melhor) BO.push('Produto estrela: <b>'+melhor.s+'</b> &mdash; lucro de '+fmtR(melhor.l)+' com margem de '+Math.round(melhor.m*100)+'% em '+fmtPer(F.fechado));
+      var mgT=(tot.fat-tot.cst)/Math.max(1,tot.fat);
+      if (tot.fat>0 && mgT>=0.30) BO.push('Margem geral saud&aacute;vel em '+fmtPer(F.fechado)+': <b>'+Math.round(mgT*100)+'%</b>');
+      else if (tot.fat>0 && mgT<0.15) AM.push('Margem geral baixa em '+fmtPer(F.fechado)+': <b>'+Math.round(mgT*100)+'%</b> &mdash; olhar custos e pre&ccedil;os');
+    }
+    /* tendencia: fechado vs anterior; e ritmo do mes corrente */
+    if (F.ante){
+      var fA=atTot(F.ante,emp).fat, fF=tot.fat;
+      if (fA>500 && fF < fA*0.75) RU.push('Vendas CAIRAM: '+fmtR(fF)+' em '+fmtPer(F.fechado)+' vs '+fmtR(fA)+' em '+fmtPer(F.ante)+' ('+Math.round((fF/fA-1)*100)+'%)');
+      if (fA>500 && fF >= fA*1.20) BO.push('Vendas CRESCERAM '+Math.round((fF/fA-1)*100)+'%: '+fmtR(fF)+' em '+fmtPer(F.fechado)+' vs '+fmtR(fA));
+    }
+    if (F.corrente && F.dia>=7){
+      var fC=atTot(F.corrente,emp).fat, proj=fC/F.dia*30;
+      if (tot.fat>500 && proj < tot.fat*0.6) AM.push('Ritmo do m&ecirc;s atual proj. '+fmtR(proj)+' &mdash; bem abaixo de '+fmtPer(F.fechado)+' ('+fmtR(tot.fat)+')');
+      if (tot.fat>500 && proj >= tot.fat*1.25) BO.push('Ritmo do m&ecirc;s atual proj. '+fmtR(proj)+' &mdash; acima de '+fmtPer(F.fechado)+' ('+fmtR(tot.fat)+')');
+    }
+    /* estoque: mesma regua da Reposicao */
+    var falt = rep.filter(function(r){ return r.emp===emp && r.urg<=1; });
+    if (falt.length){
+      var top = falt.slice(0,3).map(function(r){ return r.sku; }).join(', ');
+      RU.push('<b>'+falt.length+'</b> produto(s) j&aacute; faltaram ou v&atilde;o faltar antes da compra chegar: '+top+(falt.length>3?'&hellip;':'')+' &mdash; veja <b>Sugest&otilde;es</b>');
+    }
+    var pedirAgora = rep.filter(function(r){ return r.emp===emp && r.urg===2; }).length;
+    if (pedirAgora) AM.push(pedirAgora+' produto(s) na hora de <b>pedir agora</b> (Sugest&otilde;es)');
+    /* pendencias */
+    var pend = PED.filter(function(p){ return p.status==='Pendente' && p.empresa===emp; }).length;
+    if (pend) AM.push(pend+' pedido(s) de compra esperando aprova&ccedil;&atilde;o do Kenni');
+    var conf = (PENDE||[]).filter(function(p){ return p.empresa===emp; }).length;
+    if (conf) AM.push(conf+' anúncio(s) para conferir (aba Conferir)');
+    try{ var ign=(MK2INFO&&MK2INFO.ignoradas||[]).filter(function(r){ return r.seller===emp; });
+      if (ign.length) AM.push(ign.length+' an&uacute;ncio(s) do Vendas 2 sem produto ligado &mdash; n&atilde;o descontam estoque (ligar em Vendas 2 &rarr; "Ligar an&uacute;ncio ao produto")'); }catch(e){}
+    if (!RU.length && !AM.length && !BO.length) BO.push('Nada pedindo aten&ccedil;&atilde;o. Seguindo o baile.');
+    var bloco = function(tit, cor, itens){ if(!itens.length) return '';
+      return '<div style="margin-top:8px"><div style="font-weight:800;color:'+cor+'">'+tit+'</div><ul style="margin:4px 0 0;padding-left:20px;line-height:1.65">'+itens.map(function(i){return '<li>'+i+'</li>';}).join('')+'</ul></div>'; };
+    html += '<div class="card" style="border-left:4px solid '+(CORES[emp]||'#999')+';margin-bottom:12px">'+
+      '<div style="font-weight:800;font-size:15px"><span class="empresa-dot" style="background:'+(CORES[emp]||'#999')+'"></span>'+emp+'</div>'+
+      bloco('&#9888;&#65039; Urgente', '#b91c1c', RU)+
+      bloco('&#128993; De olho', '#b45309', AM)+
+      bloco('&#9989; Indo bem', '#166534', BO)+
+      '</div>';
+  });
+  el.innerHTML = html + '<div class="muted" style="margin:4px 2px">Base: '+fmtPer(F.fechado)+' (m&ecirc;s fechado)'+(F.corrente?(' + ritmo de '+fmtPer(F.corrente)):'')+'. Preju&iacute;zo/margem s&oacute; onde h&aacute; custo lan&ccedil;ado. Publicidade entra numa pr&oacute;xima vers&atilde;o.</div>';
+}
+function renderAll(){try{renderAtencao();}catch(e){console.warn('atencao',e);}renderPeriodoSel();updatePeriodoInfo();renderKpis();renderVendas();renderPedidos();renderEntradas();renderEstoque();renderSugestoes();renderKenni();updatePendPill();renderConferir();updateConfPill();try{renderFinanceiro();}catch(e){}}
 function updateConfPill(){var el=document.getElementById('confPill');if(!el)return;var n=PENDE.length;el.textContent=n;el.classList.toggle('hidden',!n);}
 function micrOpts(sel){var o=[['','—'],['125','125 (0.05)'],['175','175'],['250','250 (0.10)'],['010','0.10'],['007','0.07'],['005','0.05']];return o.map(function(x){return '<option value="'+x[0]+'" '+(x[0]===sel?'selected':'')+'>'+x[1]+'</option>';}).join('');}
 function dimOpts(sel){return _DIMS.map(function(d){return '<option value="'+d.dim+'" '+(d.dim===sel?'selected':'')+'>'+d.nome+'</option>';}).join('')+'<option value="" '+(!sel?'selected':'')+'>Outro</option>';}
