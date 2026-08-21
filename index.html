@@ -18,7 +18,7 @@
 
   /* chaves do navegador que passam a ser compartilhadas */
   var CHAVES = ["central_v1", "kenni_produtos_v1", "kenni_financeiro_v1",
-                "dv_modelo_v2", "rep_params_v1", "conf_cadastro", "slack_webhook"];
+                "dv_modelo_v2", "rep_params_v1", "conf_cadastro", "slack_webhook", "plano_semana_v1", "licoes_v1"];
 
   var H = {"apikey":KEY, "Authorization":"Bearer "+KEY, "Content-Type":"application/json"};
   var versoes = {};      // chave -> versao que este PC carregou
@@ -360,6 +360,8 @@ button.del{background:none;border:none;color:#c0392b;cursor:pointer;font-weight:
     <div class="tab" data-t="sugestoes">Sugest&otilde;es 💡</div>
     <div class="tab" data-t="dashboard">Dashboard 📊</div>
     <div class="tab" data-t="atencao">&#9888;&#65039; Aten&ccedil;&atilde;o</div>
+    <div class="tab" data-t="semana">&#128197; Semana</div>
+    <div class="tab" data-t="historico">&#128220; Hist&oacute;rico</div>
     <div class="tab" data-t="pedidos">Pedidos</div>
     <div class="tab" data-t="devol">&#128260; Devolu&ccedil;&otilde;es <span class="pill hidden" id="dvPill">0</span></div>
     <div class="tab" data-t="kenni">Aprova&ccedil;&atilde;o &mdash; Kenni <span class="pill hidden" id="pendPill">0</span></div>
@@ -386,6 +388,21 @@ button.del{background:none;border:none;color:#c0392b;cursor:pointer;font-weight:
     <div class="card" style="padding:0;overflow:hidden">
       <iframe id="fr_conf" title="Confer&ecirc;ncia de Expedi&ccedil;&atilde;o" style="width:100%;height:calc(100vh - 300px);min-height:520px;border:0;display:block;background:#fff"></iframe>
     </div>
+  </div>
+
+  <div id="semana" class="tabpane hidden">
+    <div class="card"><div style="font-weight:800;font-size:16px">&#128197; Plano da Semana</div>
+      <div class="muted" style="margin:4px 0 10px">Os achados de Aten&ccedil;&atilde;o, Sugest&otilde;es e pend&ecirc;ncias viram tarefas nos 7 dias, junto com a sua rotina fixa. <b>&#128308; m&iacute;nimo</b> = o que n&atilde;o pode ficar sem fazer; o resto &eacute; "se sobrar tempo". Tarefa n&atilde;o marcada volta na semana seguinte.</div>
+      <button class="act" onclick="gerarPlano()">&#128260; Gerar / atualizar o plano desta semana</button>
+      <button class="ap" onclick="copiarPlano()" style="margin-left:6px">&#128203; Copiar para o WhatsApp</button>
+      <span class="muted" id="semInfo" style="margin-left:10px"></span></div>
+    <div id="semBody"></div>
+  </div>
+
+  <div id="historico" class="tabpane hidden">
+    <div class="card"><div style="font-weight:800;font-size:16px">&#128220; Hist&oacute;rico &mdash; aprendendo com os meses</div>
+      <div class="muted" style="margin-top:4px">Cada m&ecirc;s lan&ccedil;ado vira um cap&iacute;tulo: os n&uacute;meros, &#9989; o que foi bem, &#9888;&#65039; o que foi mal, e a <b>&#129504; Li&ccedil;&atilde;o do m&ecirc;s</b> que voc&ecirc; escreve e fica guardada para sempre (sincroniza entre os PCs).</div></div>
+    <div id="histBody"></div>
   </div>
 
   <div id="atencao" class="tabpane hidden">
@@ -1209,7 +1226,195 @@ function renderAtencao(){
   });
   el.innerHTML = html + '<div class="muted" style="margin:4px 2px">Base: '+fmtPer(F.fechado)+' (m&ecirc;s fechado)'+(F.corrente?(' + ritmo de '+fmtPer(F.corrente)):'')+'. Preju&iacute;zo/margem s&oacute; onde h&aacute; custo lan&ccedil;ado. Publicidade entra numa pr&oacute;xima vers&atilde;o.</div>';
 }
-function renderAll(){try{renderAtencao();}catch(e){console.warn('atencao',e);}renderPeriodoSel();updatePeriodoInfo();renderKpis();renderVendas();renderPedidos();renderEntradas();renderEstoque();renderSugestoes();renderKenni();updatePendPill();renderConferir();updateConfPill();try{renderFinanceiro();}catch(e){}}
+/* ═══════════════════════════════════════════════════════════════
+   PLANO DA SEMANA + HISTORICO
+   So LE as outras abas; as unicas coisas que grava sao o proprio
+   plano (plano_semana_v1) e as licoes (licoes_v1), sincronizadas.
+   ═══════════════════════════════════════════════════════════════ */
+/* ── ORIENTACAO NOS CAMPOS ────────────────────────────────────────
+   O que preencher em cada campo e por que. Injetado apos carregar. */
+var AJUDA_CAMPOS = {
+ pSolic:  'Quem est\u00e1 pedindo a compra \u2014 aparece na aprova\u00e7\u00e3o do Kenni.',
+ pProd:   'Digite ou escolha o SKU. O quadro abaixo mostra estoque, ritmo e quanto comprar por empresa.',
+ pQtd:    'Quantos PACOTES comprar. O bot\u00e3o "usar" do quadro preenche a conta certa (l\u00e9ad time + folga).',
+ pEmp:    'Para QUAL empresa \u00e9 a compra \u2014 \u00e9 dela que o estoque vai subir na aprova\u00e7\u00e3o.',
+ pObs:    'Opcional: fornecedor combinado, pre\u00e7o, urg\u00eancia\u2026',
+ eProd:   'SKU do produto que CHEGOU. Prefira importar o XML da NFe abaixo: entra com quantidade e custo exatos.',
+ eQtd:    'Quantidade em PACOTES que entrou fisicamente no estoque.',
+ eEmp:    'Empresa dona da mercadoria \u2014 o saldo sobe s\u00f3 nela.',
+ eData:   'Data em que a mercadoria chegou (n\u00e3o a da compra).',
+ fileNfe: 'XML da nota fiscal do fornecedor \u2014 lan\u00e7a tudo sozinho com custo real. \u00c9 o jeito certo.',
+ fileVen: 'Excel do InxData (Vendas > Lan\u00e7ar Vendas > m\u00eas > ML > empresa). Reimportar o mesmo m\u00eas SUBSTITUI, n\u00e3o duplica.',
+ txEmp:   'Empresa do relat\u00f3rio de taxas que voc\u00ea vai subir ao lado.',
+ fileTx:  'Relat\u00f3rio de Vendas do ML (Mercado Livre > Relat\u00f3rios > Vendas). Alimenta o DRE com comiss\u00e3o e frete reais.',
+ dvEmp:   'Empresa do arquivo de devolu\u00e7\u00f5es que voc\u00ea vai subir \u2014 cada empresa sobe o seu.',
+ dvFile:  'O mesmo Excel de Vendas do ML. A aba separa o que \u00e9 devolu\u00e7\u00e3o de verdade (voltou pra voc\u00ea) do que n\u00e3o \u00e9.',
+ dvModelo:'O texto que a extens\u00e3o do Claude vai executar no Bling. Edite \u00e0 vontade \u2014 fica salvo e sincroniza.',
+ sugBusca:'Filtre por SKU ou nome para achar um produto na lista de compras.',
+ kenniPass:'Senha do Kenni (aprovar/recusar). Padr\u00e3o: 1234.',
+ loginPass:'Senha de entrada da plataforma. Padr\u00e3o: 777.'
+};
+function orientarCampos(){
+  for (var id in AJUDA_CAMPOS){
+    var el = document.getElementById(id);
+    if (!el || el.getAttribute('data-orientado')) continue;
+    el.setAttribute('data-orientado','1');
+    el.title = AJUDA_CAMPOS[id].replace(/<[^>]+>/g,'');
+    var d = document.createElement('div');
+    d.className = 'muted';
+    d.style.cssText = 'font-size:10.5px;line-height:1.35;margin-top:2px;max-width:340px';
+    d.innerHTML = '\u24d8 ' + AJUDA_CAMPOS[id];
+    if (el.parentNode) el.parentNode.insertBefore(d, el.nextSibling);
+  }
+}
+try{ document.addEventListener('DOMContentLoaded', orientarCampos); }catch(e){}
+setTimeout(function(){ try{ orientarCampos(); }catch(e){} }, 1500);
+
+var DIAS_SEM = ['Segunda','Ter\u00e7a','Quarta','Quinta','Sexta','S\u00e1bado','Domingo'];
+function semSegunda(){ var d=new Date(); var dif=(d.getDay()+6)%7; d.setDate(d.getDate()-dif); return d.toISOString().slice(0,10); }
+function planoLer(){ try{ return JSON.parse(localStorage.getItem('plano_semana_v1'))||{}; }catch(e){ return {}; } }
+function planoGravar(p){ localStorage.setItem('plano_semana_v1', JSON.stringify(p)); }
+function gerarPlano(){
+  var P0 = planoLer(), seg = semSegunda();
+  var velho = (P0.semana===seg) ? (P0.tarefas||[]) : [];
+  var feitos = {}; velho.forEach(function(t){ if(t.feito) feitos[t.id]=true; });
+  var T = [];
+  function add(id, dia, txt, camada, dono, ganho, tag){
+    T.push({id:id, dia:dia, txt:txt, camada:camada, dono:dono, ganho:ganho||0, tag:tag||'', feito:!!feitos[id]});
+  }
+  /* rotina fixa do Kenni */
+  add('rot_car_seg',0,'Revisar carrinhos abandonados','min','oper');
+  add('rot_full_seg',0,'Checar estoque do Full','min','oper');
+  add('rot_car_ter',1,'Revisar carrinhos abandonados','resto','oper');
+  add('rot_pub_ter',1,'Publicidade: revisar campanhas (cad\u00eancia de 3 dias)','min','voce');
+  add('rot_full_qui',3,'Checar estoque do Full','min','oper');
+  add('rot_pub_sex',4,'Publicidade: revisar campanhas','min','voce');
+  add('rot_promo_sex',4,'Montar a promo\u00e7\u00e3o de 5% da semana','min','voce');
+  add('rot_conf_sab',5,'Conferir a semana: o que ficou sem fazer volta na pr\u00f3xima','resto','voce');
+  /* das outras abas */
+  try{
+    var rep = (typeof repLista==='function')?repLista():[];
+    var falt = rep.filter(function(r){return r.urg<=1;});
+    if (falt.length) add('din_falta',0,'COMPRAR: '+falt.length+' produto(s) j\u00e1 faltaram/v\u00e3o faltar \u2014 '+falt.slice(0,3).map(function(r){return r.sku+' ('+r.emp+')';}).join(', ')+(falt.length>3?'\u2026':'')+' \u2014 aba Sugest\u00f5es','min','voce');
+    var agora = rep.filter(function(r){return r.urg===2;});
+    if (agora.length) add('din_pedir',1,'Pedir agora: '+agora.length+' produto(s) na janela certa de compra (Sugest\u00f5es)','resto','voce');
+  }catch(e){}
+  try{
+    var F = atFecho();
+    if (F.fechado){
+      EMPRESAS.forEach(function(emp){
+        var v=(VBASE[F.fechado]||{})[emp]||{}, tot=atTot(F.fechado,emp);
+        for (var sku in v){ var fat=Number(v[sku].fat)||0, cst=Number(v[sku].cst)||0;
+          if (fat>0 && cst>fat) add('din_prej_'+emp+'_'+sku,3,'REVISAR PRE\u00c7O/CUSTO de '+sku+' ('+emp+'): preju\u00edzo de '+fmtR(cst-fat)+' em '+fmtPer(F.fechado),'min','voce',Math.round(cst-fat));
+          else if (cst>0 && fat>=500 && (fat-cst)/fat<0.10) add('din_marg_'+emp+'_'+sku,3,'Margem apertada em '+sku+' ('+emp+'): '+Math.round((fat-cst)/fat*100)+'% \u2014 subir pre\u00e7o ou negociar custo','resto','voce');
+        }
+        if (F.ante){ var fA=atTot(F.ante,emp).fat;
+          if (fA>500 && tot.fat<fA*0.75) add('din_queda_'+emp,1,'Investigar QUEDA da '+emp+': '+fmtR(tot.fat)+' vs '+fmtR(fA)+' \u2014 pre\u00e7o? concorr\u00eancia? an\u00fancio pausado?','min','voce');
+          if (fA>500 && tot.fat>=fA*1.2) add('din_cresc_'+emp,4,'ESCALAR a '+emp+' (+'+Math.round((tot.fat/fA-1)*100)+'%): garantir estoque e verba do que puxou o crescimento','resto','voce',Math.round(tot.fat-fA));
+        }
+      });
+    }
+  }catch(e){}
+  try{ var pend=PED.filter(function(p){return p.status==='Pendente';}).length;
+    if (pend) add('din_aprovar',0,'Aprovar '+pend+' pedido(s) de compra parados (aba Aprova\u00e7\u00e3o)','min','voce'); }catch(e){}
+  try{ if ((PENDE||[]).length) add('din_conferir',2,'Conferir '+PENDE.length+' t\u00edtulo(s) sem produto (aba Conferir)','resto','oper'); }catch(e){}
+  try{ var ig=(MK2INFO&&MK2INFO.ignoradas||[]).slice().sort(function(a,b){return (b.fat||0)-(a.fat||0);});
+    if (ig.length) add('din_ligar',2,'Ligar an\u00fancio ao produto no Vendas 2: come\u00e7ar pelos '+Math.min(5,ig.length)+' maiores ('+ig.slice(0,3).map(function(r){return (r.descr||'').slice(0,25);}).join(' | ')+'\u2026)','resto','oper',Math.round(ig.slice(0,5).reduce(function(s2,r){return s2+(Number(r.fat)||0);},0))); }catch(e){}
+  /* pendencias da semana passada */
+  if (P0.semana && P0.semana!==seg){
+    (P0.tarefas||[]).forEach(function(t){
+      if (!t.feito && t.id.indexOf('rot_')!==0) add(t.id+'_v', Math.min(t.dia,4), t.txt, 'min', t.dono, t.ganho, 'da semana passada');
+    });
+  }
+  planoGravar({semana:seg, tarefas:T, gerado:new Date().toISOString()});
+  renderSemana();
+  try{ toast('Plano gerado: '+T.length+' tarefa(s) nesta semana.'); }catch(e){}
+}
+function planoMarca(id, ok2){
+  var P0=planoLer(); (P0.tarefas||[]).forEach(function(t){ if(t.id===id) t.feito=ok2; });
+  planoGravar(P0); renderSemana();
+}
+function renderSemana(){
+  var el=document.getElementById('semBody'); if(!el) return;
+  var P0=planoLer();
+  var info=document.getElementById('semInfo');
+  if (!P0.tarefas || !P0.tarefas.length){ el.innerHTML='<div class="card muted">Clique em <b>Gerar o plano desta semana</b> para come\u00e7ar.</div>'; if(info)info.textContent=''; return; }
+  if (info) info.textContent = 'Semana de '+P0.semana.split('-').reverse().join('/')+' \u00b7 '+P0.tarefas.filter(function(t){return t.feito;}).length+'/'+P0.tarefas.length+' feitas';
+  var h='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px">';
+  for (var d=0; d<7; d++){
+    var doDia=P0.tarefas.filter(function(t){return t.dia===d;});
+    if (d===6 && !doDia.length) continue;
+    doDia.sort(function(a,b){ return (a.camada==='min'?0:1)-(b.camada==='min'?0:1); });
+    h+='<div class="card" style="margin:0"><div style="font-weight:800;border-bottom:1px solid #eef1f4;padding-bottom:5px;margin-bottom:7px">'+DIAS_SEM[d]+'</div>';
+    if (!doDia.length) h+='<div class="muted">\u2014</div>';
+    doDia.forEach(function(t){
+      h+='<label style="display:flex;gap:7px;align-items:flex-start;margin-bottom:8px;cursor:pointer;'+(t.feito?'opacity:.45':'')+'">'+
+        '<input type="checkbox" '+(t.feito?'checked':'')+' onchange="planoMarca(\''+t.id+'\', this.checked)" style="margin-top:3px">'+
+        '<span style="font-size:13px;line-height:1.45">'+(t.camada==='min'?'<b style="color:#b91c1c">&#128308; m\u00ednimo</b> ':'')+
+        (t.tag?'<b style="color:#b45309">['+t.tag+']</b> ':'')+
+        (t.feito?'<s>':'')+t.txt+(t.feito?'</s>':'')+
+        ' <span class="muted">\u00b7 '+(t.dono==='voce'?'voc\u00ea decide':'operacional')+(t.ganho?(' \u00b7 ~'+fmtR(t.ganho)):'')+'</span></span></label>';
+    });
+    h+='</div>';
+  }
+  el.innerHTML=h+'</div>';
+}
+function copiarPlano(){
+  var P0=planoLer(); if(!P0.tarefas||!P0.tarefas.length){ toast('Gere o plano primeiro.'); return; }
+  var L=['\ud83d\udcc5 PLANO DA SEMANA \u2014 '+P0.semana.split('-').reverse().join('/')];
+  for (var d=0; d<7; d++){
+    var doDia=P0.tarefas.filter(function(t){return t.dia===d;});
+    if (!doDia.length) continue;
+    L.push(''); L.push('*'+DIAS_SEM[d].toUpperCase()+'*');
+    doDia.forEach(function(t){ L.push((t.feito?'\u2705':'\u2b1c')+' '+(t.camada==='min'?'\ud83d\udd34 ':'')+t.txt+(t.dono==='oper'?' (equipe)':'')); });
+  }
+  var texto=L.join('\n');
+  try{ navigator.clipboard.writeText(texto).then(function(){ toast('Plano copiado \u2014 cola no WhatsApp.'); }); }
+  catch(e){ prompt('Copie:', texto); }
+}
+/* ── HISTORICO ── */
+function licoesLer(){ try{ return JSON.parse(localStorage.getItem('licoes_v1'))||{}; }catch(e){ return {}; } }
+function licaoSalva(per, el){
+  var L=licoesLer(); L[per]=el.value; localStorage.setItem('licoes_v1', JSON.stringify(L));
+  try{ toast('\ud83e\udde0 Li\u00e7\u00e3o de '+fmtPer(per)+' guardada.'); }catch(e){}
+}
+function renderHistorico(){
+  var el=document.getElementById('histBody'); if(!el) return;
+  var pers=periodosComDados().slice().reverse();
+  if (!pers.length){ el.innerHTML='<div class="card muted">Nenhum m\u00eas lan\u00e7ado ainda. Lance no Vendas 2 que os cap\u00edtulos nascem sozinhos.</div>'; return; }
+  var L=licoesLer(), h='';
+  pers.forEach(function(per, idx){
+    var ant=pers[idx+1]||null;
+    var fat=0, cst=0, un=0, nprod=0, melhor=null, prej=[];
+    EMPRESAS.forEach(function(emp){ var v=(VBASE[per]||{})[emp]||{};
+      for (var sku in v){ var f=Number(v[sku].fat)||0, c=Number(v[sku].cst)||0;
+        fat+=f; cst+=c; un+=(Number(v[sku].qtd)||0)/(getFator(sku)||1); nprod++;
+        if (f>0 && (!melhor||f>melhor.f)) melhor={s:sku,e:emp,f:f};
+        if (f>0 && c>f) prej.push(sku+' ('+emp+')');
+      }});
+    var bem=[], mal=[];
+    if (ant){ var fatA=0; EMPRESAS.forEach(function(emp){ var v=(VBASE[ant]||{})[emp]||{}; for(var k in v) fatA+=Number(v[k].fat)||0; });
+      if (fatA>500 && fat>=fatA*1.15) bem.push('Faturamento cresceu '+Math.round((fat/fatA-1)*100)+'% sobre '+fmtPer(ant));
+      if (fatA>500 && fat<=fatA*0.85) mal.push('Faturamento caiu '+Math.round((1-fat/fatA)*100)+'% vs '+fmtPer(ant));
+    }
+    if (cst>0){ var mg=(fat-cst)/Math.max(1,fat);
+      if (mg>=0.30) bem.push('Margem bruta saud\u00e1vel: '+Math.round(mg*100)+'%');
+      else if (mg<0.15) mal.push('Margem bruta baixa: '+Math.round(mg*100)+'%');
+    }
+    if (melhor) bem.push('Carro-chefe: '+melhor.s+' ('+melhor.e+') com '+fmtR(melhor.f));
+    if (prej.length) mal.push('Produto(s) no preju\u00edzo: '+prej.slice(0,4).join(', ')+(prej.length>4?'\u2026':''));
+    if (!bem.length) bem.push('M\u00eas dentro do normal.');
+    h+='<div class="card" style="margin-bottom:12px">'+
+      '<div style="font-weight:800;font-size:15px">'+fmtPer(per)+' <span class="muted" style="font-weight:400">\u00b7 '+fmtR(fat)+' \u00b7 '+fmt(Math.round(un))+' pacotes \u00b7 '+nprod+' linhas de produto'+(cst>0?(' \u00b7 margem '+Math.round((fat-cst)/Math.max(1,fat)*100)+'%'):'')+'</span></div>'+
+      '<div style="margin-top:6px"><b style="color:#166534">&#9989; Foi bem:</b><ul style="margin:3px 0 0;padding-left:20px">'+bem.map(function(x){return '<li>'+x+'</li>';}).join('')+'</ul></div>'+
+      (mal.length?('<div style="margin-top:6px"><b style="color:#b91c1c">&#9888;&#65039; Foi mal:</b><ul style="margin:3px 0 0;padding-left:20px">'+mal.map(function(x){return '<li>'+x+'</li>';}).join('')+'</ul></div>'):'')+
+      '<div style="margin-top:8px"><b>&#129504; Li\u00e7\u00e3o do m\u00eas</b> <span class="muted">(o que este m\u00eas ensinou \u2014 fica guardado)</span><br>'+
+      '<textarea onblur="licaoSalva(\''+per+'\', this)" style="width:100%;min-height:52px;margin-top:4px;padding:8px;border:1px solid #d5dae1;border-radius:8px;font:inherit" placeholder="ex.: nunca deixar a promo\u00e7\u00e3o cont\u00ednua acabar sem substituta\u2026">'+String(L[per]||'').replace(/</g,'&lt;')+'</textarea></div>'+
+      '</div>';
+  });
+  el.innerHTML=h;
+}
+function renderAll(){try{renderAtencao();}catch(e){console.warn('atencao',e);}try{renderSemana();renderHistorico();}catch(e){console.warn('semana/hist',e);}renderPeriodoSel();updatePeriodoInfo();renderKpis();renderVendas();renderPedidos();renderEntradas();renderEstoque();renderSugestoes();renderKenni();updatePendPill();renderConferir();updateConfPill();try{renderFinanceiro();}catch(e){}}
 function updateConfPill(){var el=document.getElementById('confPill');if(!el)return;var n=PENDE.length;el.textContent=n;el.classList.toggle('hidden',!n);}
 function micrOpts(sel){var o=[['','—'],['125','125 (0.05)'],['175','175'],['250','250 (0.10)'],['010','0.10'],['007','0.07'],['005','0.05']];return o.map(function(x){return '<option value="'+x[0]+'" '+(x[0]===sel?'selected':'')+'>'+x[1]+'</option>';}).join('');}
 function dimOpts(sel){return _DIMS.map(function(d){return '<option value="'+d.dim+'" '+(d.dim===sel?'selected':'')+'>'+d.nome+'</option>';}).join('')+'<option value="" '+(!sel?'selected':'')+'>Outro</option>';}
